@@ -2,84 +2,98 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>AI Antigravity: 통합 감지 시스템</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <title>AI Antigravity: 집중력 통합 관리 시스템</title>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
     
     <style>
         body { 
             margin: 0; background-color: #0d1117; color: white; 
-            font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+            font-family: 'Pretendard', sans-serif; 
+            display: flex; flex-direction: column; align-items: center; min-height: 100vh;
         }
+        
         #header { margin: 30px; text-align: center; }
+
+        /* 시작 화면 오버레이 (브라우저 소리 재생 정책 해결용) */
+        #start-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(13, 17, 23, 0.95); z-index: 100;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        #start-btn {
+            padding: 20px 50px; font-size: 1.5rem; background: #238636;
+            color: white; border: none; border-radius: 10px; cursor: pointer;
+        }
 
         /* [반중력 상태] 둥둥 떠다니는 효과 */
         .antigravity-mode {
             font-size: 2.5rem; font-weight: bold; color: #58a6ff;
-            text-shadow: 0 0 20px #58a6ff;
-            transition: all 0.8s ease-in-out;
-            display: inline-block;
-            animation: float 3s infinite ease-in-out;
+            text-shadow: 0 0 20px #58a6ff; transition: all 0.8s ease-in-out;
+            display: inline-block; animation: float 3s infinite ease-in-out;
         }
-
         @keyframes float {
             0% { transform: translateY(0px) rotate(0deg); }
             50% { transform: translateY(-50px) rotate(3deg); }
             100% { transform: translateY(0px) rotate(0deg); }
         }
 
-        /* [중력 상태] 무거워지며 쿵! 떨어지는 효과 (하지만 화면 밖으로 나가지 않게 조절) */
+        /* [중력 상태] 바닥으로 툭 떨어지는 효과 */
         .heavy-mode {
-            font-size: 2.5rem; font-weight: bold;
-            display: inline-block; position: relative; z-index: 10;
-            transform: translateY(20px) scale(0.9);
-            color: #f85149; filter: blur(0.5px);
-            text-shadow: 0 5px 15px rgba(248, 81, 73, 0.5);
-            transition: all 0.4s cubic-bezier(0.17, 0.67, 0.83, 0.67);
+            transform: translateY(250px) scaleY(0.6);
+            color: #f85149; filter: blur(1.5px);
+            transition: all 0.5s cubic-bezier(0.17, 0.67, 0.83, 0.67);
         }
 
-        #webcam-container { border: 5px solid #30363d; border-radius: 20px; overflow: hidden; }
+        #webcam-container { 
+            position: relative; border: 5px solid #30363d; 
+            border-radius: 20px; overflow: hidden;
+        }
         #status-board { margin-top: 20px; font-size: 1.1rem; color: #8b949e; text-align: center; }
     </style>
 </head>
 <body>
 
+    <div id="start-overlay">
+        <h2>AI Antigravity 시작하기</h2>
+        <p>시작 버튼을 누르면 카메라와 음성 알림이 활성화됩니다.</p>
+        <button id="start-btn" onclick="startApp()">시스템 가동</button>
+    </div>
+
     <div id="header">
         <h1>import antigravity</h1>
-        <div id="main-obj" class="antigravity-mode">☁️ AI 무중력 상태 ☁️</div>
+        <div id="main-obj" class="antigravity-mode">🚀 준비 완료</div>
     </div>
 
     <div id="webcam-container"></div>
     
     <div id="status-board">
-        <p id="pose-label">포즈 상태 분석 중...</p>
-        <p id="image-label">이미지 상태 분석 중...</p>
+        <p id="pose-label">포즈: 대기 중...</p>
+        <p id="image-label">사물: 대기 중...</p>
     </div>
+
+    <audio id="alert-sound" src="alert.mp3" preload="auto"></audio>
 
     <script type="text/javascript">
         const POSE_PATH = "./pose_model/";
         const IMAGE_PATH = "./image_model/";
 
         let poseModel, imageModel, webcam, ctx;
+        let isAlerting = false; // 소리 중복 재생 방지
+
+        async function startApp() {
+            document.getElementById('start-overlay').style.display = 'none';
+            init();
+        }
 
         async function init() {
-            if (window.location.protocol === 'file:') {
-                alert("⚠️ [접속 주소 오류] ⚠️\n현재 로컬 파일(file://)로 접속하셨습니다. 이 상태에서는 브라우저 보안 정책상 카메라 오류가 발생하며 권한 설정 버튼도 보이지 않습니다.\n\n반드시 브라우저 주소창에 'http://localhost:8000'을 입력해서 접속해주세요!");
-                document.getElementById("main-obj").innerText = "⚠️ localhost:8000 으로 접속하세요!";
-                document.getElementById("main-obj").className = "heavy-mode";
-                document.getElementById("pose-label").innerText = "카메라를 켤 수 없는 상태입니다.";
-                return;
-            }
-
             try {
+                // 모델 로드
                 poseModel = await tmPose.load(POSE_PATH + "model.json", POSE_PATH + "metadata.json");
                 imageModel = await tmImage.load(IMAGE_PATH + "model.json", IMAGE_PATH + "metadata.json");
                 
                 const size = 400;
                 webcam = new tmPose.Webcam(size, size, true); 
-                
-                // 브라우저 권한 요청 시도
                 await webcam.setup(); 
                 await webcam.play();
                 window.requestAnimationFrame(loop);
@@ -89,16 +103,8 @@
                 ctx = canvas.getContext("2d");
                 document.getElementById("webcam-container").appendChild(canvas);
             } catch (e) {
-                console.error("초기화 중 오류 발생:", e);
-                const isNoDevice = e.message.includes('Requested device not found');
-                const errorMessage = isNoDevice 
-                    ? "웹캠(카메라)이 컴퓨터에 연결되어 있지 않거나 인식되지 않았습니다." 
-                    : ("오류 상세: " + e.message);
-
-                alert("🚫 카메라를 켤 수 없습니다!\n\n" + errorMessage + "\n\n1. 카메라가 컴퓨터에 잘 연결되어 있는지 확인해주세요.\n2. 다른 프로그램(줌 등)이 카메라를 쓰고 있다면 꺼주세요.");
-                document.getElementById("main-obj").innerText = "카메라 연결 오류 🚫";
-                document.getElementById("main-obj").className = "heavy-mode";
-                document.getElementById("pose-label").innerText = errorMessage;
+                alert("파일을 로드하지 못했습니다. 폴더명과 파일명을 확인하세요!");
+                console.error(e);
             }
         }
 
@@ -117,16 +123,33 @@
             const topImage = getTopClass(imagePrediction);
 
             const mainObj = document.getElementById("main-obj");
+            const alertSound = document.getElementById("alert-sound");
+            
             document.getElementById("pose-label").innerText = "포즈 판정: " + topPose;
             document.getElementById("image-label").innerText = "이미지 판정: " + topImage;
 
-            // [통합 로직] 두 모델 모두 good_pose일 때만 반중력 가동
+            // [핵심 로직] 두 모델이 모두 'good_pose'일 때만 반중력
             if (topPose === "good_pose" && topImage === "good_pose") {
                 mainObj.className = "antigravity-mode";
-                mainObj.innerText = "🚀 반중력 상태: 집중 유지 중!";
-            } else {
+                mainObj.innerText = "🚀 중력을 거스르는 중!";
+                
+                // 소리 정지
+                alertSound.pause();
+                alertSound.currentTime = 0;
+                isAlerting = false;
+            } 
+            // 둘 중 하나라도 'bad_pose'라면 중력 발생 및 경고음
+            else if (topPose === "bad_pose" || topImage === "bad_pose") {
                 mainObj.className = "heavy-mode";
                 mainObj.innerText = "😫 중력 발생: 자세를 바로잡으세요!";
+                
+                if (!isAlerting) {
+                    alertSound.play();
+                    isAlerting = true;
+                }
+            } else {
+                // 부재 중이거나 다른 상태일 때
+                mainObj.innerText = "☁️ 대기 상태";
             }
 
             drawPose(pose);
@@ -145,14 +168,15 @@
         }
 
         function drawPose(pose) {
-            ctx.drawImage(webcam.canvas, 0, 0);
-            if (pose) {
-                tmPose.drawKeypoints(pose.keypoints, 0.5, ctx);
-                tmPose.drawSkeleton(pose.keypoints, 0.5, ctx);
+            if (webcam.canvas) {
+                ctx.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+                }
             }
         }
-
-        init();
     </script>
 </body>
 </html>
